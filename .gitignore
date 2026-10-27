@@ -1,0 +1,14 @@
+.vscode/
+
+# Photos, labels and results may contain patient-level information: never commit them.
+data/
+results/
+
+# Python
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+# OS / editor
+*:Zone.Identifier
+.DS_Store

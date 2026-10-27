@@ -1,0 +1,105 @@
+[project]
+name = "ocr-experiment"
+version = "0.1.0"
+description = "Proof of concept: lightweight pipelines to read handwritten paper forms from photos"
+requires-python = ">=3.12"
+dependencies = []
+
+# Candidate libraries to experiment with, grouped by purpose. Nothing here is
+# installed automatically; install a group with e.g. `pip install --group core`.
+# Only pretrained models are used: no training.
+[dependency-groups]
+# Image processing: quality checks, perspective correction, alignment, cropping
+core = [
+    "numpy",
+    "opencv-python-headless",
+    "pillow",
+    "scikit-image",
+]
+# Running small pretrained ONNX models (e.g. an MNIST digit CNN)
+onnx = [
+    "onnxruntime",
+]
+# Off-the-shelf OCR engines to benchmark
+ocr = [
+    "rapidocr",          # PP-OCR models run through onnxruntime, no PaddlePaddle
+    "paddleocr",         # official PaddleOCR (pulls in paddlex)
+    "paddlepaddle",      # CPU inference backend for paddleocr
+    "pytesseract",       # needs the tesseract binary (conda-forge: tesseract)
+    "easyocr",
+    "python-doctr",
+]
+# Handwriting recognition and small vision-language models (TrOCR, Florence-2)
+hf = [
+    "torch",
+    "transformers",
+    "optimum",           # ONNX export of Hugging Face models, to compare runtimes
+    "timm",
+]
+# Post-processing with known data (fuzzy matching against known lists)
+postprocess = [
+    "rapidfuzz",
+]
+# Plots of evaluation results
+analysis = [
+    "matplotlib",
+]
+dev = [
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "NPY",  # numpy-specific rules
+    "PTH",  # prefer pathlib over os.path
+    "D",    # pydocstyle
+    "PL",   # pylint
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "I001", # Alphabetic order of imports
+    "D100", # Missing docstring in public module
+    "D104", # Missing docstring in public package
+    "D105", # Missing docstring in magic method
+    "D106", # Missing docstring in public nested class
+    "D107", # Missing docstring in __init__
+    "D401", # First line should be in imperative mood
+    "D413", # Missing blank line after last section
+    "D420", # Order of the docstring sections
+    "D203", # 1 blank line required before class docstring
+    "SIM108", # Use ternary operators
+    "SIM102", # Use a single if statement instead of nested if statements
+    "SIM114", # Combine `if` branches
+    "DOC501", # Raised exception {id} missing from docstring
+    "DOC502", # Raised exception is not explicitly raised: {id}
+    "RUF022", # `__all__` is not sorted
+    "RUF005", # Consider expression instead of concatenation
+    "D213", # Multi-line docstring summary should start at the second line (conflicts with D212)
+    "PLR0904", # Too many public methods ({methods} > {max_methods})
+    "PLR0911", # Too many return statements ({returns} > {max_returns})
+    "PLR0912", # Too many branches ({branches} > {max_branches})
+    "PLR0913", # Too many arguments ({arguments} > {max_arguments})
+    "PLR0914", # Too many local variables ({variables} > {max_variables})
+    "PLR0915", # Too many statements ({statements} > {max_statements})
+    "PLR0916", # Too many Boolean expressions ({expressions} > {max_expressions})
+    "PLR1702", # Too many nested blocks ({blocks} > {max_blocks}),
+    "COM812", # Missing trailing comma
+    "PLR2004", # Magic value used in comparison (thresholds are everywhere in image code)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
