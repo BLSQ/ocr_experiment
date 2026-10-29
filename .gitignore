@@ -1,7 +1,9 @@
 .vscode/
 
-# Photos, labels and results may contain patient-level information: never commit them.
-data/
+# Photos, labels and results may contain patient-level information: don't commit them.
+# Exception: the small test selection (photos + expected.csv), shared on purpose so everyone tests on the same set.
+data/*
+!data/images_selection/
 results/
 
 # Python
