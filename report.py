@@ -1,6 +1,6 @@
 """Build an HTML report that compares the preprocessing runs saved by evaluate_preprocessing.py.
 
-Usage (from the project root):
+evaluate_preprocessing.py rebuilds it at the end of every run. To rebuild it by hand (from the project root):
     python report.py
 
 Reads every results/preprocessing/<pipeline>_<time>.json and keeps only what describes the run: the pipeline name,
@@ -109,6 +109,8 @@ TEMPLATE = """<!doctype html>
   h2 { font-size: 16px; margin: 0 0 4px; }
   .sub, .note { color: var(--text-2); margin: 0 0 12px; }
   .note { font-size: 13px; margin: 6px 0 0; }
+  .explain { color: var(--text-2); font-size: 13px; margin: 0 0 12px; padding-left: 20px; }
+  .explain li { margin: 0 0 4px; }
   .controls { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; margin: 16px 0; }
   .controls label { color: var(--text-2); }
   select { font: inherit; }
@@ -146,13 +148,44 @@ TEMPLATE = """<!doctype html>
 
   <section>
     <h2>Runs</h2>
-    <p class="sub">Click a column title to sort. "x/y" = photos right out of photos checked.</p>
+    <p class="sub">One row per run of a pipeline on the test photos. Click a column title to sort.</p>
+    <ul class="explain">
+      <li><b>pipeline and steps</b>: the pipeline's name in <code>pipelines.py</code>, and below it its steps in
+        order, with any settings in brackets (e.g. <code>table_crop(join=9)</code>).</li>
+      <li><b>date</b>: when the run was made.</li>
+      <li><b>grid</b>: photos where both the number of rows and the number of columns found are exactly the ones
+        in <code>expected.csv</code>, as "photos right / photos checked (%)". This is the main score.</li>
+      <li><b>rows</b>, <b>cols</b>: the same, for the rows or the columns alone.</li>
+      <li><b>turn</b>: photos turned upright correctly; only for pipelines with the orientation step, "-"
+        otherwise.</li>
+      <li><b>off by r/c</b>: how many rows / columns the grid found is off by, on average over the photos (lower
+        is better, 0 / 0 = perfect). It shows which pipelines come close even when few are exactly right.
+        Empty for runs made before it was measured.</li>
+      <li><b>failed</b>: photos where a step crashed; their checks count as wrong.</li>
+      <li><b>s/photo</b>: mean seconds to run all the steps and count the grid, per photo.</li>
+      <li><b>photos</b>: how many photos were used, and from which folder.</li>
+    </ul>
     <div class="table-wrap"><table id="runs"></table></div>
   </section>
 
   <section>
     <h2>Accuracy per pipeline</h2>
     <p class="sub">Share of checked photos where each value was right.</p>
+    <ul class="explain">
+      <li>Each pipeline runs its steps on every test photo, then counts the rows and columns of the table it ends
+        with. Those counts are compared with <code>expected.csv</code>, and only an exact match counts as right:
+        13 rows found for 12 expected is as wrong as 2.</li>
+      <li><b>rows</b> and <b>columns</b>: photos where that count is right. <b>grid</b>: photos where both are
+        right, the one that matters for cutting the table into cells. <b>turn</b>: photos turned upright
+        correctly (only for pipelines with the orientation step).</li>
+      <li>The label after each bar is photos right / photos checked. With 10 test photos, one photo is 10%, so
+        small differences between pipelines can be chance.</li>
+      <li>A photo where a step crashed counts as wrong. Pipelines are sorted best first by the measure chosen at
+        the top of the page, then by the other measures, then by speed.</li>
+      <li>Exact matches are rare while the grids are still far off, so also compare the <b>off by r/c</b> column
+        in the table above: how many rows and columns the grid is off by on average. It shows which pipelines
+        are getting closer even when none is exactly right.</li>
+    </ul>
     <div id="accuracy" class="chart"></div>
     <p class="note" id="accuracy-note"></p>
   </section>
@@ -183,13 +216,15 @@ document.getElementById("generated").textContent = "__GENERATED__";
 
 const CHECKS = ["grid", "rows", "cols", "turn"];
 // Steps in pipeline order; each keeps its colour slot. Unknown steps share the "other" grey.
-const STEP_ORDER = ["page_crop", "deskew", "orientation", "channel", "deblur", "table_crop", "measure_grid"];
+const STEP_ORDER = [
+  "page_crop", "deskew", "orientation", "channel", "contrast", "deblur", "table_crop", "measure_grid",
+];
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const checkColour = (check) => css(`--series-${CHECKS.indexOf(check) + 1}`);
 const stepColour = (step) => {
   const slot = STEP_ORDER.indexOf(step);
-  return slot >= 0 ? css(`--series-${slot + 1}`) : css("--other");
+  return slot >= 0 && slot < 7 ? css(`--series-${slot + 1}`) : css("--other");  // 7 colours in the palette
 };
 
 const state = { showAll: false, measure: "rows", sortKey: "date", sortUp: false };
@@ -258,7 +293,11 @@ function columns() {
       sub: (r) => r.steps },
     { key: "date", title: "date", sortValue: (r) => r.date, text: (r) => shortDate(r.date) },
     ...CHECKS.map(checkCol),
-    { key: "failed", title: "failed", num: true, sortValue: (r) => r.failed_photos, text: (r) => r.failed_photos },
+    { key: "off", title: "off by r/c", num: true,
+      sortValue: (r) => -((r.rows_mean_error ?? 99) + (r.cols_mean_error ?? 99)),
+      text: (r) => (r.rows_mean_error == null ? "-"
+        : `${r.rows_mean_error.toFixed(1)} / ${r.cols_mean_error.toFixed(1)}`) },
+    { key: "failed",title: "failed", num: true, sortValue: (r) => r.failed_photos, text: (r) => r.failed_photos },
     { key: "seconds", title: "s/photo", num: true, sortValue: (r) => r.mean_seconds_per_photo,
       text: (r) => r.mean_seconds_per_photo.toFixed(2) },
     { key: "photos", title: "photos", sortValue: (r) => r.photos_dir, text: (r) => `${r.photos} in ${r.photos_dir}` },
@@ -425,10 +464,16 @@ drawAll();
 """
 
 
-if __name__ == "__main__":
+def build_report() -> Path | None:
+    """Read every saved run and write the HTML report, overwriting the previous one.
+
+    Returns:
+        The path of the report, or None if there are no runs yet.
+    """
     runs = load_runs(RESULTS_DIR)
     if not runs:
-        sys.exit(f"No result files in {RESULTS_DIR}/. Run evaluate_preprocessing.py first.")
+        print(f"No result files in {RESULTS_DIR}/. Run evaluate_preprocessing.py first.")
+        return None
 
     # "</" is escaped so a value can never close the <script> tag early.
     data = json.dumps(runs, ensure_ascii=False).replace("</", "<\\/")
@@ -436,4 +481,10 @@ if __name__ == "__main__":
 
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(html, encoding="utf-8")
-    print(f"Read {len(runs)} runs of {len({run['pipeline'] for run in runs})} pipelines. Saved {REPORT_PATH}")
+    print(f"Report: read {len(runs)} runs of {len({run['pipeline'] for run in runs})} pipelines, saved {REPORT_PATH}")
+    return REPORT_PATH
+
+
+if __name__ == "__main__":
+    if build_report() is None:
+        sys.exit(1)

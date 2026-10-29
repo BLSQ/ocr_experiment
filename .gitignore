@@ -8,6 +8,7 @@ results/
 __pycache__/
 *.py[cod]
 .ruff_cache/
+.venv/
 
 # OS / editor
 *:Zone.Identifier

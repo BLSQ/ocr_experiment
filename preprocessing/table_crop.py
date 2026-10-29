@@ -8,7 +8,8 @@ Steps:
 2. Table: among the connected groups of lines, keep the one where the most lines cross.
    A table grid has many crossings; the page edge or a single box has only a few.
 3. Crop: fit 4 corners around that group and warp them to a rectangle, which also fixes
-   perspective (a table photographed at an angle looks like a trapezoid).
+   perspective (a table photographed at an angle looks like a trapezoid). If the corners are
+   tilted more than MAX_CORNER_TILT, they are not trusted and the straight bounding box is used.
 
 For each photo it saves the crop and the original with the table outline drawn on it to
 results/debug_table/, so the result can be checked by eye.
@@ -20,12 +21,16 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+MAX_CORNER_TILT = 10  # degrees; a table outline tilted more than this (after deskew) is not trusted
 
-def line_masks(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+
+def line_masks(gray: np.ndarray, bridge: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """Find the long horizontal and vertical lines of an image.
 
     Args:
         gray: Grayscale image, roughly upright.
+        bridge: Gaps up to this many pixels along a line are closed before the long-stroke test, so broken or
+            faint lines are kept. 0 closes nothing.
 
     Returns:
         Two binary masks (255 = line): horizontal lines and vertical lines.
@@ -34,27 +39,37 @@ def line_masks(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     # Ink becomes white on black. The neighbourhood size follows the image size.
     block = max(15, min(h, w) // 50) | 1
     binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, block, 10)
+    binary_h, binary_v = binary, binary
+    if bridge:
+        binary_h = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (bridge, 1)))
+        binary_v = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (1, bridge)))
 
     # Opening with a long, thin kernel keeps only strokes at least that long (lines, not text).
-    horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (w // 30, 1)))
-    vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, h // 30)))
-    return horizontal, vertical
+    # At least 1 pixel, so a tiny crop doesn't crash.
+    long_h = cv2.getStructuringElement(cv2.MORPH_RECT, (max(w // 30, 1), 1))
+    long_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(h // 30, 1)))
+    return cv2.morphologyEx(binary_h, cv2.MORPH_OPEN, long_h), cv2.morphologyEx(binary_v, cv2.MORPH_OPEN, long_v)
 
 
-def find_table(gray: np.ndarray) -> tuple[np.ndarray, int] | None:
+def find_table(gray: np.ndarray, bridge: int = 0, join: int = 5, merge: float = 0.0) -> tuple[np.ndarray, int] | None:
     """Find the 4 corners of the table: the group of lines with the most crossings.
 
     Args:
         gray: Grayscale image, roughly upright.
+        bridge: Gaps along a line closed before finding lines (see line_masks()).
+        join: Size in pixels of the thickening that joins lines that almost touch. Larger joins the pieces of a
+            table whose lines are broken.
+        merge: Also keep every other group with at least this share of the best group's crossings (0.2 = 20%),
+            for a table that is still in pieces. 0 keeps only the best group.
 
     Returns:
         The corners as a (4, 2) array (top-left, top-right, bottom-right, bottom-left) and the
         number of line crossings in the table, or None if no lines cross.
     """
-    horizontal, vertical = line_masks(gray)
+    horizontal, vertical = line_masks(gray, bridge)
 
     # Thicken a little so lines that almost touch join, and their crossings overlap.
-    kernel = np.ones((5, 5), np.uint8)
+    kernel = np.ones((join, join), np.uint8)
     horizontal, vertical = cv2.dilate(horizontal, kernel), cv2.dilate(vertical, kernel)
     grid = horizontal | vertical
     crossings = horizontal & vertical
@@ -66,16 +81,38 @@ def find_table(gray: np.ndarray) -> tuple[np.ndarray, int] | None:
     best = int(crossing_pixels.argmax())
     if crossing_pixels[best] == 0:
         return None
-    table_mask = np.where(labels == best, 255, 0).astype(np.uint8)
+    keep = [best]
+    if merge:
+        keep = np.flatnonzero(crossing_pixels >= merge * crossing_pixels[best])
+    table_mask = np.where(np.isin(labels, keep), 255, 0).astype(np.uint8)
     n_crossings = cv2.connectedComponents(crossings & table_mask)[0] - 1
 
-    # Outline of the group, simplified to 4 corners; fall back to the tightest rotated rectangle.
+    # Outline of the group(s), simplified to 4 corners.
     contours, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    hull = cv2.convexHull(max(contours, key=cv2.contourArea))
-    corners = cv2.approxPolyDP(hull, 0.02 * cv2.arcLength(hull, closed=True), closed=True)
-    if len(corners) != 4:
-        corners = cv2.boxPoints(cv2.minAreaRect(hull))
-    return order_corners(corners.reshape(4, 2).astype(np.float32)), n_crossings
+    hull = cv2.convexHull(np.vstack(contours))
+    approx = cv2.approxPolyDP(hull, 0.02 * cv2.arcLength(hull, closed=True), closed=True).reshape(-1, 2)
+    corners = order_corners(approx.astype(np.float32)) if len(approx) == 4 else None
+
+    # The image is roughly straight already, so a tilted outline means the corners are wrong (e.g. broken lines
+    # plus text). Warping to it would rotate the table, so use the straight bounding box instead.
+    if corners is None or edge_tilt(corners) > MAX_CORNER_TILT:
+        x, y, w, h = cv2.boundingRect(hull)
+        corners = np.array([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], np.float32)
+    return corners, n_crossings
+
+
+def edge_tilt(corners: np.ndarray) -> float:
+    """Measure how far the edges of a 4-corner outline are from horizontal or vertical.
+
+    Args:
+        corners: (4, 2) array: top-left, top-right, bottom-right, bottom-left.
+
+    Returns:
+        The largest angle, in degrees, between an edge and the nearest horizontal or vertical direction.
+    """
+    edges = np.roll(corners, -1, axis=0) - corners
+    angles = np.degrees(np.arctan2(edges[:, 1], edges[:, 0]))
+    return float(np.abs((angles + 45) % 90 - 45).max())
 
 
 def order_corners(corners: np.ndarray) -> np.ndarray:

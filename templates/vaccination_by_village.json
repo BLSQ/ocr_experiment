@@ -1,0 +1,30 @@
+{
+  "name": "vaccination_by_village",
+  "description": "Monthly vaccination summary per village: one row per village (fixed strategy), then an 'AVANCEE' (outreach) label row and the outreach villages; one column per vaccine.",
+  "source_photo": "data/images_selection/g45BudZFeLk_2026-05-29_MKlEDFiCvMG.png",
+  "notes": [
+    "Line positions are shares of the table: 0 = its left (or top) border, 1 = its right (or bottom) border, so the template does not depend on the photo size.",
+    "Positions were estimated by eye from the source photo (about +-0.01); the grid fit adjusts them to each photo.",
+    "The 20 vaccine columns are drawn about equally wide. Their names are written sideways in the header and still need to be filled in (vaccine_01 = leftmost).",
+    "The vaccine part of the AVANCEE row seems to have no vertical lines (one merged cell); to check on other photos."
+  ],
+  "n_rows": 8,
+  "n_cols": 22,
+  "row_lines": [0.0, 0.192, 0.303, 0.414, 0.52, 0.626, 0.732, 0.838, 1.0],
+  "col_lines": [
+    0.0, 0.144, 0.286,
+    0.322, 0.358, 0.393, 0.429, 0.465, 0.5, 0.536, 0.572, 0.607, 0.643,
+    0.679, 0.715, 0.75, 0.786, 0.822, 0.857, 0.893, 0.929, 0.964, 1.0
+  ],
+  "rows": ["header", "fixed_1", "fixed_2", "fixed_3", "fixed_4", "fixed_5", "outreach_label", "outreach_1"],
+  "cols": [
+    "village", "strategy",
+    "vaccine_01", "vaccine_02", "vaccine_03", "vaccine_04", "vaccine_05",
+    "vaccine_06", "vaccine_07", "vaccine_08", "vaccine_09", "vaccine_10",
+    "vaccine_11", "vaccine_12", "vaccine_13", "vaccine_14", "vaccine_15",
+    "vaccine_16", "vaccine_17", "vaccine_18", "vaccine_19", "vaccine_20"
+  ],
+  "merged": [
+    {"row": 6, "col": 2, "row_span": 1, "col_span": 20}
+  ]
+}

@@ -17,6 +17,7 @@ Without expected.csv everything still runs, but nothing is scored.
 
 Saves one JSON file per combination to results/preprocessing/<pipeline>_<time>.json, with the settings,
 a summary, and for every photo what each step did, how long it took, the grid found and the checks.
+Then rebuilds the HTML report of all runs, results/reports/preprocessing.html (see report.py).
 """
 
 import argparse
@@ -36,12 +37,15 @@ sys.path.insert(0, str(Path(__file__).parent / "preprocessing"))
 
 from preprocessing.build_cell_grids import draw_cells, find_cells
 from preprocessing.channel import select_channel
+from preprocessing.contrast import METHODS as CONTRAST_METHODS
+from preprocessing.contrast import line_contrast
 from preprocessing.deblur import METHODS, sharpness
 from preprocessing.deskew import deskew
 from preprocessing.orientation import fix_orientation
 from preprocessing.page_crop import crop_page
 from preprocessing.table_crop import find_table, warp_to_rectangle
 from pipelines import PIPELINES
+from report import build_report
 
 RESULTS_DIR = Path("results/preprocessing")
 CHECKS = ["grid", "rows", "cols", "turn"]
@@ -50,12 +54,13 @@ CHECKS = ["grid", "rows", "cols", "turn"]
 # --- Steps: each takes a BGR image and its settings, and returns the new image and what it did. ---
 
 
-def step_page_crop(image: np.ndarray, **settings: float) -> tuple[np.ndarray, dict]:
+def step_page_crop(image: np.ndarray, **settings: float | str) -> tuple[np.ndarray, dict]:
     """Crop the sheet of paper out of the photo.
 
     Args:
         image: BGR image.
-        **settings: Settings for paper_mask(), e.g. max_texture.
+        **settings: Settings for crop_page(): method ("mask" or "edges"), and the settings of that method, e.g.
+            max_texture for "mask" or min_step for "edges".
 
     Returns:
         The page (or the unchanged photo), and the decision and paper area.
@@ -125,20 +130,51 @@ def step_channel(image: np.ndarray, channel: str = "auto") -> tuple[np.ndarray, 
     return cv2.cvtColor(best, cv2.COLOR_GRAY2BGR), info
 
 
-def step_table_crop(image: np.ndarray) -> tuple[np.ndarray, dict]:
+def step_contrast(image: np.ndarray, method: str = "flatten") -> tuple[np.ndarray, dict]:
+    """Even out the lighting and raise the contrast with one of the methods from contrast.py.
+
+    Args:
+        image: BGR image.
+        method: Name of the method in contrast.METHODS.
+
+    Returns:
+        The result (gray, stored as BGR so later steps work), and how dark the lines are before and after.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    result = CONTRAST_METHODS[method](gray)
+    info = {
+        "method": method,
+        "line_contrast_before": round(line_contrast(gray), 1),
+        "line_contrast_after": round(line_contrast(result), 1),
+    }
+    return cv2.cvtColor(result, cv2.COLOR_GRAY2BGR), info
+
+
+def step_table_crop(
+    image: np.ndarray, bridge: int = 0, join: int = 5, merge: float = 0.0, min_area: float = 0.0
+) -> tuple[np.ndarray, dict]:
     """Crop the table out of the page and flatten it.
 
     Args:
         image: BGR image.
+        bridge: Gaps along a line closed before finding lines (see table_crop.find_table()).
+        join: Thickening that joins lines that almost touch (see table_crop.find_table()).
+        merge: Also keep groups with this share of the best group's crossings (see table_crop.find_table()).
+        min_area: If the table covers less than this share of the image, it is probably a piece of the table, so
+            the image is kept as it is.
 
     Returns:
-        The table (or the unchanged image if no table is found), and whether it was found.
+        The table (or the unchanged image), whether it was found, and the share of the image it covers.
     """
-    found = find_table(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
+    found = find_table(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), bridge=bridge, join=join, merge=merge)
     if found is None:
         return image, {"found": False}
     corners, n_crossings = found
-    return warp_to_rectangle(image, corners), {"found": True, "crossings": n_crossings}
+    area = cv2.contourArea(corners) / (image.shape[0] * image.shape[1])
+    info = {"found": True, "crossings": n_crossings, "area": round(area, 3)}
+    if area < min_area:
+        return image, {**info, "kept": "table too small"}
+    return warp_to_rectangle(image, corners), info
 
 
 STEPS = {
@@ -147,6 +183,7 @@ STEPS = {
     "orientation": step_orientation,
     "deblur": step_deblur,
     "channel": step_channel,
+    "contrast": step_contrast,
     "table_crop": step_table_crop,
 }
 
@@ -268,6 +305,14 @@ def summarize(photos: dict[str, dict]) -> dict:
         summary[f"{name}_correct"] = round(sum(results) / len(results), 3) if results else None
         summary[f"{name}_checked"] = len(results)
 
+    # How far off the counts are on average, so pipelines that are close but not exact can be told apart.
+    # A failed photo counts as 0 rows and 0 columns found.
+    for name, key in [("rows", "n_rows"), ("cols", "n_cols")]:
+        errors = [
+            abs((p["result"] or {}).get(key, 0) - p["expected"][key]) for p in photos.values() if key in p["expected"]
+        ]
+        summary[f"{name}_mean_error"] = round(sum(errors) / len(errors), 2) if errors else None
+
     step_seconds: dict[str, list[float]] = {}
     for record in photos.values():
         for step in record["steps"]:
@@ -341,7 +386,7 @@ def main() -> None:
         path.write_text(json.dumps(output, indent=2, default=to_json), encoding="utf-8")
 
     # Comparison table, best grid score first (pipelines never scored go last).
-    print(f"\n{'pipeline':<30}{'grid':>7}{'rows':>7}{'cols':>7}{'turn':>7}{'failed':>8}{'s/photo':>9}")
+    print(f"\n{'pipeline':<30}{'grid':>7}{'rows':>7}{'cols':>7}{'turn':>7}{'off r/c':>10}{'failed':>8}{'s/photo':>9}")
     by_grid = sorted(
         summaries.items(), key=lambda item: -1 if item[1]["grid_correct"] is None else item[1]["grid_correct"]
     )
@@ -349,8 +394,10 @@ def main() -> None:
         scores = "".join(
             f"{summary[f'{c}_correct']:>7.0%}" if summary[f"{c}_correct"] is not None else f"{'-':>7}" for c in CHECKS
         )
-        print(f"{name:<30}{scores}{summary['failed_photos']:>8}{summary['mean_seconds_per_photo'] or 0:>9.2f}")
+        off = f"{summary['rows_mean_error'] or 0:.1f}/{summary['cols_mean_error'] or 0:.1f}"
+        print(f"{name:<30}{scores}{off:>10}{summary['failed_photos']:>8}{summary['mean_seconds_per_photo'] or 0:>9.2f}")
     print(f"\nSaved results to {RESULTS_DIR}/ (files ending in _{stamp})")
+    build_report()
 
 
 if __name__ == "__main__":
