@@ -25,6 +25,7 @@ ocr_experiment/
 ├── preprocessing/             one script per preprocessing step (see below)
 ├── pipelines.py               combinations of steps to compare
 ├── evaluate_preprocessing.py  runs the combinations and scores them against expected.csv
+├── evaluate_quality.py        runs the image-quality combinations and saves them side by side
 ├── report.py                  builds the HTML report (run automatically by evaluate_preprocessing.py)
 ├── evaluate.py                for step 2: scores an OCR approach (not in use yet)
 ├── make_demo_data.py          for step 2: draws fake forms to try a reader on
@@ -33,6 +34,7 @@ ocr_experiment/
 └── results/                   not in git
     ├── debug_<step>/          images and JSON saved by each step script
     ├── preprocessing/         one JSON file per run of a combination
+    ├── quality/               one folder per run of evaluate_quality.py
     └── reports/               preprocessing.html
 ```
 
@@ -68,11 +70,12 @@ this order.
 | Step | Script | What it does |
 |---|---|---|
 | Page crop | `page_crop.py` | Cuts the sheet of paper out of the background, flattened to a rectangle. Two methods: `mask` finds the paper pixels (bright, colourless, smooth), for a page on wood or fabric; `edges` finds the page's straight borders, which also works for a page lying on another sheet or running off the photo. |
-| Deskew | `deskew.py` | Measures the small tilt from the long straight lines and rotates it away, so table lines are horizontal and vertical. |
+| Deskew | `deskew.py` | Measures the small tilt from the long straight lines and rotates it away, so table lines are horizontal and vertical. With `shear`, it then also straightens vertical lines that still lean (a photo taken at an angle). |
 | Orientation | `orientation.py` | Deskews, then turns the page by 90° or 180° using the OCR text detector. Photos are expected upright, so it is not used in the current combinations. |
 | Colour channel | `channel.py` | Keeps the colour channel (grey, red, green or blue) where the ink stands out most from the paper. Needs a colour image, so it goes before contrast and deblur. |
 | Contrast | `contrast.py` | Evens out the lighting (removes shadows) and/or raises the contrast with CLAHE, so faint table lines are not lost. |
 | Deblur | `deblur.py` | Sharpens a blurry photo (unsharp mask, CLAHE + unsharp mask, or deconvolution). |
+| Denoise | `denoise.py` | Removes noise (median, bilateral or non-local means). Used in the image-quality combinations. |
 | Table crop | `table_crop.py` | Finds the group of ruled lines with the most crossings (the table) and cuts it out, flattened to a rectangle. |
 | Cells | `build_cell_grids.py` | Finds the row and column lines of the table and every cell, including merged cells. |
 
@@ -104,6 +107,7 @@ those files:
 ```
 python preprocessing/page_crop.py data/images_selection/*.png
 python preprocessing/contrast.py data/images_selection/*.png
+python preprocessing/denoise.py data/images_selection/*.png
 python preprocessing/table_crop.py data/images_selection/*.png
 python preprocessing/build_cell_grids.py results/debug_table/*_table.png
 ```
@@ -142,6 +146,39 @@ python preprocessing/build_cell_grids.py results/debug_table/*_table.png
 
    Every run ends by rebuilding the HTML report (see below), so there is nothing
    else to run.
+
+### Image quality only
+
+`QUALITY_PIPELINES` in `pipelines.py` lists combinations of the simple steps
+that only improve the image (page crop, deskew, colour channel, contrast,
+sharpen), with no table crop or grid. Nothing is scored against expected values;
+the results are meant to be compared by eye:
+
+```
+python evaluate_quality.py
+python evaluate_quality.py deskew_page_flatten page_deskew_flatten
+```
+
+It prints one line per combination, plus the original photos for reference, with
+the mean over the photos of (↑ higher is better, ↓ lower is better):
+
+| Column | Meaning |
+|---|---|
+| `sharp↑` | variance of the Laplacian; noise raises it too, so read it with `noise` |
+| `noise↓` | estimated noise, in grey levels |
+| `lines↑` | how much darker the ruled lines are than the paper, in units of paper noise |
+| `separ↑` | how well one threshold splits ink from paper (0 to 1) |
+| `uneven↓` | how much the paper level changes across the image (shadows), in grey levels |
+| `ink` | share of the image that is ink; clearly less than the others means thinner or lost strokes |
+| `tilt↓` | the worse of the horizontal lines' tilt and the vertical lines' lean, in degrees |
+| `cropped↑` | share of photos where the page crop cut out the page |
+| `s/photo`, `failed` | mean seconds per photo, photos where a step crashed |
+
+In `results/quality/<time>/` it saves one `<photo>_strip.png` per photo
+(the original and every combination side by side), each result at full size,
+`summary.json` with what each step did, and `report.html`, the table above
+in a page (hover a column for its meaning, a combination for its steps). To
+rebuild the report of an earlier run: `python evaluate_quality.py --report results/quality/<time>`.
 
 ## Reading the results
 

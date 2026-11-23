@@ -40,7 +40,9 @@ from preprocessing.channel import select_channel
 from preprocessing.contrast import METHODS as CONTRAST_METHODS
 from preprocessing.contrast import line_contrast
 from preprocessing.deblur import METHODS, sharpness
-from preprocessing.deskew import deskew
+from preprocessing.denoise import METHODS as DENOISE_METHODS
+from preprocessing.denoise import noise
+from preprocessing.deskew import deskew, straighten
 from preprocessing.orientation import fix_orientation
 from preprocessing.page_crop import crop_page
 from preprocessing.table_crop import find_table, warp_to_rectangle
@@ -69,15 +71,20 @@ def step_page_crop(image: np.ndarray, **settings: float | str) -> tuple[np.ndarr
     return page, {"status": status, "area": round(area, 3)}
 
 
-def step_deskew(image: np.ndarray) -> tuple[np.ndarray, dict]:
+def step_deskew(image: np.ndarray, shear: bool = False) -> tuple[np.ndarray, dict]:
     """Straighten the small tilt.
 
     Args:
         image: BGR image.
+        shear: Also straighten vertical lines that still lean once the horizontal ones are level (a photo taken
+            at an angle), see deskew.straighten().
 
     Returns:
-        The straightened image, and the tilt angle that was removed.
+        The straightened image, and the tilt angle (and lean, with shear) that was removed.
     """
+    if shear:
+        straight, tilt, lean = straighten(image)
+        return straight, {"tilt": round(tilt, 2), "lean": round(lean, 2)}
     straight, angle = deskew(image)
     return straight, {"tilt": round(angle, 2)}
 
@@ -95,24 +102,42 @@ def step_orientation(image: np.ndarray) -> tuple[np.ndarray, dict]:
     return upright, info
 
 
-def step_deblur(image: np.ndarray, method: str = "clahe_unsharp") -> tuple[np.ndarray, dict]:
+def step_deblur(image: np.ndarray, method: str = "clahe_unsharp", **params: float) -> tuple[np.ndarray, dict]:
     """Sharpen a blurry photo with one of the methods from deblur.py.
 
     Args:
         image: BGR image.
         method: Name of the method in deblur.METHODS.
+        **params: Settings passed to that method, e.g. sigma and amount for "unsharp" (its defaults otherwise).
 
     Returns:
         The sharpened image (gray, stored as BGR so later steps work), and the sharpness before and after.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    sharp = METHODS[method](gray)
+    sharp = METHODS[method](gray, **params)
     info = {
         "method": method,
         "sharpness_before": round(sharpness(gray), 1),
         "sharpness_after": round(sharpness(sharp), 1),
     }
     return cv2.cvtColor(sharp, cv2.COLOR_GRAY2BGR), info
+
+
+def step_denoise(image: np.ndarray, method: str = "nlmeans", **params: float) -> tuple[np.ndarray, dict]:
+    """Remove noise with one of the methods from denoise.py.
+
+    Args:
+        image: BGR image.
+        method: Name of the method in denoise.METHODS.
+        **params: Settings passed to that method, e.g. strength for "nlmeans" (its defaults otherwise).
+
+    Returns:
+        The denoised image (gray, stored as BGR so later steps work), and the estimated noise before and after.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    clean = DENOISE_METHODS[method](gray, **params)
+    info = {"method": method, "noise_before": round(noise(gray), 2), "noise_after": round(noise(clean), 2)}
+    return cv2.cvtColor(clean, cv2.COLOR_GRAY2BGR), info
 
 
 def step_channel(image: np.ndarray, channel: str = "auto") -> tuple[np.ndarray, dict]:
@@ -182,6 +207,7 @@ STEPS = {
     "deskew": step_deskew,
     "orientation": step_orientation,
     "deblur": step_deblur,
+    "denoise": step_denoise,
     "channel": step_channel,
     "contrast": step_contrast,
     "table_crop": step_table_crop,

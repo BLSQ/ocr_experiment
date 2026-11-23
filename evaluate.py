@@ -107,18 +107,14 @@ def main() -> None:
         "photos": len(photos),
         "failed_photos": sum(photo["error"] is not None for photo in photos),
         "mean_seconds_per_photo": (
-            round(sum(photo["seconds"] for photo in photos) / len(photos), 3)
-            if photos
-            else None
+            round(sum(photo["seconds"] for photo in photos) / len(photos), 3) if photos else None
         ),
     }
 
     RESULTS_DIR.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     output = RESULTS_DIR / f"{args.approach}_{stamp}.json"
-    output.write_text(
-        json.dumps({"summary": summary, "photos": photos}, indent=2), encoding="utf-8"
-    )
+    output.write_text(json.dumps({"summary": summary, "photos": photos}, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     print(f"Saved to {output}")
 

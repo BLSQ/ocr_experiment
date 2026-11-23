@@ -6,9 +6,13 @@ settings. The step names are the keys of STEPS in evaluate_preprocessing.py:
     page_crop    settings: method = "mask" (paper pixels, default) or "edges" (page borders, also works for a page
                  on another sheet). For "mask": max_saturation, max_texture, brightness_offset, close_fraction
                  (see paper_mask()). For "edges": min_step (see find_page_edges())
-    deskew       no settings
+    deskew       settings: shear = True to also straighten vertical lines that still lean after the rotation
+                 (a photo taken at an angle; see deskew.straighten()). Default False: rotation only
     orientation  no settings (it also fixes the tilt, so deskew is not needed before it)
-    deblur       settings: method = "unsharp", "clahe_unsharp" or "deconvolve"
+    deblur       settings: method = "unsharp", "clahe_unsharp" or "deconvolve", and that method's own settings
+                 (sigma, amount for "unsharp"; sigma, iterations for "deconvolve"; see deblur.py)
+    denoise      settings: method = "median", "bilateral" or "nlmeans", and strength for "nlmeans" (default 7;
+                 lower keeps thin lines, see denoise.py)
     channel      settings: channel = "auto", "gray", "red", "green", "blue" or "lab_b" (needs colour: put it
                  after page_crop, which needs colour too, and before deblur or contrast, which make the image grey)
     contrast     settings: method = "flatten", "clahe", "flatten_clahe" or "flatten_stretch" (see contrast.py)
@@ -55,4 +59,40 @@ PIPELINES = {
         FLAT_CLAHE,
         "table_crop",
     ],
+}
+
+# Image quality only (23 November 2026): simple steps that make the photo easier to read, with no table crop and
+# no grid. Compared with evaluate_quality.py, which saves the results side by side to look at by eye.
+# The first one is the base; each of the others changes one thing from it.
+FLATTEN = ("contrast", {"method": "flatten"})
+QUALITY_PIPELINES = {
+    # Base: straighten, crop the page, even out the lighting.
+    "deskew_page_flatten": ["deskew", PAGE_EDGES, FLATTEN],
+    # Order: crop first, so the background around the page does not affect the tilt found.
+    "page_deskew_flatten": [PAGE_EDGES, "deskew", FLATTEN],
+    # Colour channel: keep the red channel, where blue/black ink stands out more than in grey.
+    "deskew_page_red_flatten": ["deskew", PAGE_EDGES, RED, FLATTEN],
+    # Contrast: flatten, then make the darkest ink black so faint strokes get darker.
+    "deskew_page_flatstretch": ["deskew", PAGE_EDGES, ("contrast", {"method": "flatten_stretch"})],
+    # Sharpen: add an unsharp mask after the contrast, for blurry photos.
+    "deskew_page_flatten_sharpen": ["deskew", PAGE_EDGES, FLATTEN, ("deblur", {"method": "unsharp"})],
+    # Second round: the first run showed page crop before deskew leaves no tilt and is fastest, so
+    # page_deskew_flatten is the new base, and each pipeline below changes one thing from it.
+    # Milder sharpening (default sigma 2, amount 1.5), hoping for crisper strokes without doubling the noise.
+    "page_deskew_flatten_mildsharpen": [
+        PAGE_EDGES,
+        "deskew",
+        FLATTEN,
+        ("deblur", {"method": "unsharp", "sigma": 1.0, "amount": 0.7}),
+    ],
+    # Remove the noise first (non-local means), before flatten raises it on darker paper.
+    "page_deskew_denoise_flatten": [PAGE_EDGES, "deskew", ("denoise", {"method": "nlmeans"}), FLATTEN],
+    # The other page crop method (paper pixels), for the photo the edges method does not crop.
+    "page_mask_deskew_flatten": [("page_crop", {"method": "mask"}), "deskew", FLATTEN],
+    # Third round. On a photo taken at an angle, page_deskew_flatten left the vertical lines leaning by 5 degrees
+    # (the old tilt measure missed it), and denoise (strength 7) made the lines too thin.
+    # Deskew with shear: rotate so the horizontal lines are level, then unshear so the vertical lines are too.
+    "page_deskewshear_flatten": [PAGE_EDGES, ("deskew", {"shear": True}), FLATTEN],
+    # Weaker denoise, to keep the thin lines.
+    "page_deskew_denoise3_flatten": [PAGE_EDGES, "deskew", ("denoise", {"method": "nlmeans", "strength": 3}), FLATTEN],
 }

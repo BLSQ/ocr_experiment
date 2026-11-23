@@ -30,7 +30,7 @@ complicated. Don't reintroduce that kind of structure:
   forms (printed digits, made by `make_demo_data.py`). No real reading
   approach (`read_form`) exists yet.
 - **Real photos:** `data/images/` (4175 photos, also as `data/images.tar.gz`)
-  and `data/images_selection/` (11 photos the user evaluates preprocessing
+  and `data/images_selection/` (10 photos the user evaluates preprocessing
   on). They are at most **512 px** on the longest side. There is no
   `labels.csv` for them yet. `data/demo/` was removed; regenerate it with
   `make_demo_data.py` (it writes to `data/demo/` relative to the working
@@ -51,19 +51,21 @@ complicated. Don't reintroduce that kind of structure:
 ```
 data/                   gitignored
   images/               all real form photos
-  images_selection/     11 real photos used to test preprocessing
+  images_selection/     10 real photos (+ expected.csv) used to test preprocessing
   demo/                 fake forms from make_demo_data.py (only when generated)
 preprocessing/
   example.py            teaching example approach (read_form)
   <step>.py             preprocessing experiments, one step per file
-pipelines.py            combinations of preprocessing steps (PIPELINES dict)
+pipelines.py            combinations of preprocessing steps (PIPELINES and QUALITY_PIPELINES dicts)
 evaluate_preprocessing.py  runs and scores the combinations in pipelines.py
+evaluate_quality.py     runs QUALITY_PIPELINES (image quality only, no grid), saves side-by-side strips
 evaluate.py             scores one approach, saves JSON to results/
 try_ppocr_whole_page.py first try at reading a whole page with PP-OCRv5
 make_demo_data.py       creates demo forms to try things before real photos
 results/                gitignored
   <approach>_<timestamp>.json
   preprocessing/        <pipeline>_<timestamp>.json from evaluate_preprocessing.py
+  quality/<timestamp>/  strips, images and summary.json from evaluate_quality.py
   debug_<step>/         outputs of preprocessing/<step>.py
 ```
 
